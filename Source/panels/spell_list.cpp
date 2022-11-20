@@ -4,6 +4,7 @@
 
 #include "control.h"
 #include "engine.h"
+#include "engine/backbuffer_state.hpp"
 #include "engine/palette.h"
 #include "engine/render/text_render.hpp"
 #include "inv_iterators.hpp"
@@ -133,7 +134,6 @@ void DrawSpell(const Surface &out)
 void DrawSpellList(const Surface &out)
 {
 	InfoString = {};
-	ClearPanel();
 
 	Player &myPlayer = *MyPlayer;
 
@@ -168,7 +168,7 @@ void DrawSpellList(const Surface &out)
 		case RSPLTYPE_SKILL:
 			spellColor = PAL16_YELLOW - 46;
 			PrintSBookSpellType(out, spellListItem.location, _("Skill"), spellColor);
-			InfoString = fmt::format(fmt::runtime(_("{:s} Skill")), pgettext("spell", spellDataItem.sSkillText));
+			InfoString = fmt::format(fmt::runtime(_("{:s} Skill")), pgettext("spell", spellDataItem.sNameText));
 			break;
 		case RSPLTYPE_SPELL:
 			if (!myPlayer.isOnLevel(0)) {
@@ -277,13 +277,11 @@ void SetSpell()
 		return;
 	}
 
-	ClearPanel();
-
 	Player &myPlayer = *MyPlayer;
 	myPlayer._pRSpell = pSpell;
 	myPlayer._pRSplType = pSplType;
 
-	force_redraw = 255;
+	RedrawEverything();
 }
 
 void SetSpeedSpell(size_t slot)
@@ -334,7 +332,7 @@ void ToggleSpell(size_t slot)
 	if ((spells & GetSpellBitmask(spellId)) != 0) {
 		myPlayer._pRSpell = spellId;
 		myPlayer._pRSplType = myPlayer._pSplTHotKey[slot];
-		force_redraw = 255;
+		RedrawEverything();
 	}
 }
 

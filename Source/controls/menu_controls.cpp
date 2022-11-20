@@ -13,7 +13,7 @@ namespace devilution {
 MenuAction GetMenuHeldUpDownAction()
 {
 	static AxisDirectionRepeater repeater;
-	const AxisDirection dir = repeater.Get(GetLeftStickOrDpadDirection());
+	const AxisDirection dir = repeater.Get(GetLeftStickOrDpadDirection(false));
 	switch (dir.y) {
 	case AxisDirectionY_UP:
 		return MenuAction_UP;
@@ -27,24 +27,25 @@ MenuAction GetMenuHeldUpDownAction()
 MenuAction GetMenuAction(const SDL_Event &event)
 {
 	const ControllerButtonEvent ctrlEvent = ToControllerButtonEvent(event);
-	bool isGamepadMotion = ProcessControllerMotion(event, ctrlEvent);
+	if (ctrlEvent.button == ControllerButton_IGNORE) {
+		return MenuAction_NONE;
+	}
 
+	bool isGamepadMotion = ProcessControllerMotion(event, ctrlEvent);
 	DetectInputMethod(event, ctrlEvent);
 	if (isGamepadMotion) {
 		return GetMenuHeldUpDownAction();
 	}
 
 	if (!ctrlEvent.up) {
-		switch (ctrlEvent.button) {
-		case ControllerButton_IGNORE:
-			return MenuAction_NONE;
-		case ControllerButton_BUTTON_B: // Right button
+		switch (TranslateTo(GamepadType, ctrlEvent.button)) {
+		case ControllerButton_BUTTON_A:
 		case ControllerButton_BUTTON_START:
 			return MenuAction_SELECT;
 		case ControllerButton_BUTTON_BACK:
-		case ControllerButton_BUTTON_A: // Bottom button
+		case ControllerButton_BUTTON_B:
 			return MenuAction_BACK;
-		case ControllerButton_BUTTON_X: // Left button
+		case ControllerButton_BUTTON_X:
 			return MenuAction_DELETE;
 		case ControllerButton_BUTTON_DPAD_UP:
 		case ControllerButton_BUTTON_DPAD_DOWN:

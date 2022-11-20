@@ -14,6 +14,8 @@
 #include <SimpleIni.h>
 
 #include "control.h"
+#include "controls/controller.h"
+#include "controls/game_controls.h"
 #include "discord/discord.h"
 #include "engine/demomode.h"
 #include "engine/sound_defs.hpp"
@@ -29,6 +31,7 @@
 #include "utils/paths.h"
 #include "utils/stdcompat/algorithm.hpp"
 #include "utils/str_cat.hpp"
+#include "utils/str_split.hpp"
 #include "utils/utf8.hpp"
 
 namespace devilution {
@@ -352,8 +355,6 @@ void LoadOptions()
 		GetIniStringVector("NetMsg", QuickMessages[i].key, sgOptions.Chat.szHotKeyMsgs[i]);
 
 	GetIniValue("Controller", "Mapping", sgOptions.Controller.szMapping, sizeof(sgOptions.Controller.szMapping), "");
-	sgOptions.Controller.bSwapShoulderButtonMode = GetIniBool("Controller", "Swap Shoulder Button Mode", false);
-	sgOptions.Controller.bDpadHotkeys = GetIniBool("Controller", "Dpad Hotkeys", false);
 	sgOptions.Controller.fDeadzone = GetIniFloat("Controller", "deadzone", 0.07F);
 #ifdef __vita__
 	sgOptions.Controller.bRearTouch = GetIniBool("Controller", "Enable Rear Touchpad", true);
@@ -384,8 +385,6 @@ void SaveOptions()
 		SetIniValue("NetMsg", QuickMessages[i].key, sgOptions.Chat.szHotKeyMsgs[i]);
 
 	SetIniValue("Controller", "Mapping", sgOptions.Controller.szMapping);
-	SetIniValue("Controller", "Swap Shoulder Button Mode", sgOptions.Controller.bSwapShoulderButtonMode);
-	SetIniValue("Controller", "Dpad Hotkeys", sgOptions.Controller.bDpadHotkeys);
 	SetIniValue("Controller", "deadzone", sgOptions.Controller.fDeadzone);
 #ifdef __vita__
 	SetIniValue("Controller", "Enable Rear Touchpad", sgOptions.Controller.bRearTouch);
@@ -1155,7 +1154,7 @@ void OptionEntryLanguageCode::CheckLanguagesAreInitialized() const
 	languages.emplace_back("hr", "Hrvatski");
 	languages.emplace_back("it", "Italiano");
 
-	if (font_mpq) {
+	if (HaveExtraFonts()) {
 		languages.emplace_back("ja", "日本語");
 		languages.emplace_back("ko", "한국어");
 	}
@@ -1167,7 +1166,7 @@ void OptionEntryLanguageCode::CheckLanguagesAreInitialized() const
 	languages.emplace_back("sv", "Svenska");
 	languages.emplace_back("uk", "Українська");
 
-	if (font_mpq) {
+	if (HaveExtraFonts()) {
 		languages.emplace_back("zh_CN", "汉语");
 		languages.emplace_back("zh_TW", "漢語");
 	}
@@ -1250,8 +1249,8 @@ KeymapperOptions::KeymapperOptions()
 std::vector<OptionEntryBase *> KeymapperOptions::GetEntries()
 {
 	std::vector<OptionEntryBase *> entries;
-	for (auto &action : actions) {
-		entries.push_back(action.get());
+	for (Action &action : actions) {
+		entries.push_back(&action);
 	}
 	return entries;
 }
@@ -1360,7 +1359,12 @@ bool KeymapperOptions::Action::SetValue(int value)
 
 void KeymapperOptions::AddAction(string_view key, const char *name, const char *description, uint32_t defaultKey, std::function<void()> actionPressed, std::function<void()> actionReleased, std::function<bool()> enable, unsigned index)
 {
-	actions.push_back(std::unique_ptr<Action>(new Action(key, name, description, defaultKey, std::move(actionPressed), std::move(actionReleased), std::move(enable), index)));
+	actions.emplace_front(key, name, description, defaultKey, std::move(actionPressed), std::move(actionReleased), std::move(enable), index);
+}
+
+void KeymapperOptions::CommitActions()
+{
+	actions.reverse();
 }
 
 void KeymapperOptions::KeyPressed(uint32_t key) const
@@ -1401,9 +1405,9 @@ void KeymapperOptions::KeyReleased(uint32_t key) const
 
 string_view KeymapperOptions::KeyNameForAction(string_view actionName) const
 {
-	for (const auto &action : actions) {
-		if (action->key == actionName && action->boundKey != SDLK_UNKNOWN) {
-			return action->GetValueDescription();
+	for (const Action &action : actions) {
+		if (action.key == actionName && action.boundKey != SDLK_UNKNOWN) {
+			return action.GetValueDescription();
 		}
 	}
 	return "";
@@ -1411,12 +1415,293 @@ string_view KeymapperOptions::KeyNameForAction(string_view actionName) const
 
 uint32_t KeymapperOptions::KeyForAction(string_view actionName) const
 {
-	for (const auto &action : actions) {
-		if (action->key == actionName && action->boundKey != SDLK_UNKNOWN) {
-			return action->boundKey;
+	for (const Action &action : actions) {
+		if (action.key == actionName && action.boundKey != SDLK_UNKNOWN) {
+			return action.boundKey;
 		}
 	}
 	return SDLK_UNKNOWN;
+}
+
+PadmapperOptions::PadmapperOptions()
+    : OptionCategoryBase("Padmapping", N_("Padmapping"), N_("Padmapping Settings"))
+    , buttonToButtonName { {
+	      /*ControllerButton_NONE*/ {},
+	      /*ControllerButton_IGNORE*/ {},
+	      /*ControllerButton_AXIS_TRIGGERLEFT*/ "LT",
+	      /*ControllerButton_AXIS_TRIGGERRIGHT*/ "RT",
+	      /*ControllerButton_BUTTON_A*/ "A",
+	      /*ControllerButton_BUTTON_B*/ "B",
+	      /*ControllerButton_BUTTON_X*/ "X",
+	      /*ControllerButton_BUTTON_Y*/ "Y",
+	      /*ControllerButton_BUTTON_LEFTSTICK*/ "LS",
+	      /*ControllerButton_BUTTON_RIGHTSTICK*/ "RS",
+	      /*ControllerButton_BUTTON_LEFTSHOULDER*/ "LB",
+	      /*ControllerButton_BUTTON_RIGHTSHOULDER*/ "RB",
+	      /*ControllerButton_BUTTON_START*/ "Start",
+	      /*ControllerButton_BUTTON_BACK*/ "Select",
+	      /*ControllerButton_BUTTON_DPAD_UP*/ "Up",
+	      /*ControllerButton_BUTTON_DPAD_DOWN*/ "Down",
+	      /*ControllerButton_BUTTON_DPAD_LEFT*/ "Left",
+	      /*ControllerButton_BUTTON_DPAD_RIGHT*/ "Right",
+	  } }
+{
+	buttonNameToButton.reserve(buttonToButtonName.size());
+	for (size_t i = 0; i < buttonToButtonName.size(); ++i) {
+		buttonNameToButton.emplace(buttonToButtonName[i], static_cast<ControllerButton>(i));
+	}
+}
+
+std::vector<OptionEntryBase *> PadmapperOptions::GetEntries()
+{
+	std::vector<OptionEntryBase *> entries;
+	for (Action &action : actions) {
+		entries.push_back(&action);
+	}
+	return entries;
+}
+
+PadmapperOptions::Action::Action(string_view key, const char *name, const char *description, ControllerButtonCombo defaultInput, std::function<void()> actionPressed, std::function<void()> actionReleased, std::function<bool()> enable, unsigned index)
+    : OptionEntryBase(key, OptionEntryFlags::Invisible, name, description)
+    , defaultInput(defaultInput)
+    , actionPressed(std::move(actionPressed))
+    , actionReleased(std::move(actionReleased))
+    , enable(std::move(enable))
+    , dynamicIndex(index)
+{
+	if (index != 0) {
+		dynamicKey = fmt::format(fmt::runtime(fmt::string_view(key.data(), key.size())), index);
+		this->key = dynamicKey;
+	}
+}
+
+string_view PadmapperOptions::Action::GetName() const
+{
+	if (dynamicIndex == 0)
+		return _(name);
+	dynamicName = fmt::format(fmt::runtime(_(name)), dynamicIndex);
+	return dynamicName;
+}
+
+void PadmapperOptions::Action::LoadFromIni(string_view category)
+{
+	std::array<char, 64> result;
+	if (!GetIniValue(category.data(), key.data(), result.data(), result.size())) {
+		SetValue(defaultInput);
+		return; // Use the default button combo if no mapping has been set.
+	}
+
+	std::string modName;
+	std::string buttonName;
+	auto parts = SplitByChar(result.data(), '+');
+	auto it = parts.begin();
+	if (it == parts.end()) {
+		SetValue(ControllerButtonCombo {});
+		return;
+	}
+	buttonName = std::string(*it);
+	if (++it != parts.end()) {
+		modName = std::move(buttonName);
+		buttonName = std::string(*it);
+	}
+
+	ControllerButtonCombo input {};
+	if (!modName.empty()) {
+		auto modifierIt = sgOptions.Padmapper.buttonNameToButton.find(modName);
+		if (modifierIt == sgOptions.Padmapper.buttonNameToButton.end()) {
+			// Use the default button combo if the modifier name is unknown.
+			LogWarn("Padmapper: unknown button '{}'", modName);
+			SetValue(defaultInput);
+			return;
+		}
+		input.modifier = modifierIt->second;
+	}
+
+	auto buttonIt = sgOptions.Padmapper.buttonNameToButton.find(buttonName);
+	if (buttonIt == sgOptions.Padmapper.buttonNameToButton.end()) {
+		// Use the default button combo if the button name is unknown.
+		LogWarn("Padmapper: unknown button '{}'", buttonName);
+		SetValue(defaultInput);
+		return;
+	}
+	input.button = buttonIt->second;
+
+	// Store the input in action.boundInput and in the map so we can save()
+	// the actions while keeping the same order as they have been added.
+	SetValue(input);
+}
+void PadmapperOptions::Action::SaveToIni(string_view category) const
+{
+	if (boundInput.button == ControllerButton_NONE) {
+		// Just add an empty config entry if the action is unbound.
+		SetIniValue(category.data(), key.data(), "");
+		return;
+	}
+	std::string inputName = sgOptions.Padmapper.buttonToButtonName[static_cast<size_t>(boundInput.button)];
+	if (inputName.empty()) {
+		LogVerbose("Padmapper: no name found for key '{}'", key);
+		return;
+	}
+	if (boundInput.modifier != ControllerButton_NONE) {
+		const std::string &modifierName = sgOptions.Padmapper.buttonToButtonName[static_cast<size_t>(boundInput.modifier)];
+		if (modifierName.empty()) {
+			LogVerbose("Padmapper: no name found for key '{}'", key);
+			return;
+		}
+		inputName = StrCat(modifierName, "+", inputName);
+	}
+	SetIniValue(category.data(), key.data(), inputName.data());
+}
+
+string_view PadmapperOptions::Action::GetValueDescription() const
+{
+	return boundInputDescription;
+}
+
+bool PadmapperOptions::Action::SetValue(ControllerButtonCombo value)
+{
+	const std::string &modifierName = sgOptions.Padmapper.buttonToButtonName[static_cast<size_t>(value.modifier)];
+	const std::string &buttonName = sgOptions.Padmapper.buttonToButtonName[static_cast<size_t>(value.button)];
+	if ((value.modifier != ControllerButton_NONE && modifierName.empty())
+	    || (value.button != ControllerButton_NONE && buttonName.empty())) {
+		// Ignore invalid button combos
+		return false;
+	}
+
+	// Remove old button combo
+	if (boundInput.button != ControllerButton_NONE) {
+		boundInput = {};
+		boundInputDescription = "";
+	}
+
+	// Add new button combo
+	if (value.button != ControllerButton_NONE) {
+		boundInput = value;
+		boundInputDescription = buttonName;
+
+		if (!modifierName.empty()) {
+			boundInputDescription = StrCat(modifierName, "+", boundInputDescription);
+		}
+	}
+
+	return true;
+}
+
+void PadmapperOptions::AddAction(string_view key, const char *name, const char *description, ControllerButtonCombo defaultInput, std::function<void()> actionPressed, std::function<void()> actionReleased, std::function<bool()> enable, unsigned index)
+{
+	if (committed)
+		return;
+	actions.emplace_front(key, name, description, defaultInput, std::move(actionPressed), std::move(actionReleased), std::move(enable), index);
+}
+
+void PadmapperOptions::CommitActions()
+{
+	if (committed)
+		return;
+	actions.reverse();
+	committed = true;
+}
+
+void PadmapperOptions::ButtonPressed(ControllerButton button)
+{
+	const Action *action = FindAction(button);
+	if (action == nullptr)
+		return;
+	if (action->actionPressed)
+		action->actionPressed();
+	SuppressedButton = action->boundInput.modifier;
+	buttonToReleaseAction[static_cast<size_t>(button)] = action;
+}
+
+void PadmapperOptions::ButtonReleased(ControllerButton button, bool invokeAction)
+{
+	if (invokeAction) {
+		const Action *action = buttonToReleaseAction[static_cast<size_t>(button)];
+		if (action == nullptr)
+			return; // Ignore unmapped buttons.
+
+		// Check that the action can be triggered.
+		if (action->actionReleased && (!action->enable || action->enable()))
+			action->actionReleased();
+	}
+	buttonToReleaseAction[static_cast<size_t>(button)] = nullptr;
+}
+
+bool PadmapperOptions::IsActive(string_view actionName) const
+{
+	for (const Action &action : actions) {
+		if (action.key != actionName)
+			continue;
+		const Action *releaseAction = buttonToReleaseAction[static_cast<size_t>(action.boundInput.button)];
+		return releaseAction != nullptr && releaseAction->key == actionName;
+	}
+	return false;
+}
+
+string_view PadmapperOptions::ActionNameTriggeredByButtonEvent(ControllerButtonEvent ctrlEvent) const
+{
+	if (!gbRunGame)
+		return "";
+
+	if (!ctrlEvent.up) {
+		const Action *pressAction = FindAction(ctrlEvent.button);
+		return pressAction != nullptr ? pressAction->key : "";
+	}
+	const Action *releaseAction = buttonToReleaseAction[static_cast<size_t>(ctrlEvent.button)];
+	if (releaseAction == nullptr)
+		return "";
+	return releaseAction->key;
+}
+
+string_view PadmapperOptions::InputNameForAction(string_view actionName) const
+{
+	for (const Action &action : actions) {
+		if (action.key == actionName && action.boundInput.button != ControllerButton_NONE) {
+			return action.GetValueDescription();
+		}
+	}
+	return "";
+}
+
+ControllerButtonCombo PadmapperOptions::ButtonComboForAction(string_view actionName) const
+{
+	for (const auto &action : actions) {
+		if (action.key == actionName && action.boundInput.button != ControllerButton_NONE) {
+			return action.boundInput;
+		}
+	}
+	return ControllerButton_NONE;
+}
+
+const PadmapperOptions::Action *PadmapperOptions::FindAction(ControllerButton button) const
+{
+	// To give preference to button combinations,
+	// first pass ignores mappings where no modifier is bound
+	for (const Action &action : actions) {
+		ControllerButtonCombo combo = action.boundInput;
+		if (combo.modifier == ControllerButton_NONE)
+			continue;
+		if (button != combo.button)
+			continue;
+		if (!IsControllerButtonPressed(combo.modifier))
+			continue;
+		if (action.enable && !action.enable())
+			continue;
+		return &action;
+	}
+
+	for (const Action &action : actions) {
+		ControllerButtonCombo combo = action.boundInput;
+		if (combo.modifier != ControllerButton_NONE)
+			continue;
+		if (button != combo.button)
+			continue;
+		if (action.enable && !action.enable())
+			continue;
+		return &action;
+	}
+
+	return nullptr;
 }
 
 namespace {

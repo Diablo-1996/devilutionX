@@ -14,6 +14,7 @@
 #include "automap.h"
 #include "control.h"
 #include "cursor.h"
+#include "engine/backbuffer_state.hpp"
 #include "engine/load_cel.hpp"
 #include "engine/point.hpp"
 #include "error.h"
@@ -42,6 +43,7 @@ bool DebugVision = false;
 bool DebugGrid = false;
 std::unordered_map<int, Point> DebugCoordsMap;
 bool DebugScrollViewEnabled = false;
+std::string debugTRN;
 
 namespace {
 
@@ -237,6 +239,11 @@ std::string DebugCmdLoadQuestMap(const string_view parameter)
 
 		if (!MyPlayer->isOnLevel(quest._qlevel)) {
 			StartNewLvl(*MyPlayer, (quest._qlevel != 21) ? interface_mode::WM_DIABNEXTLVL : interface_mode::WM_DIABTOWNWARP, quest._qlevel);
+			ProcessMessages();
+			// Workaround for SDL_PollEvent:
+			// StartNewLvl pushes a new event with SDL_PushEvent.
+			// ProcessMessages calls SDL_PollEvent but SDL ignores the new pushed event.
+			// Calling SDL_PollEvent again fixes this.
 			ProcessMessages();
 		}
 
@@ -544,8 +551,8 @@ std::string DebugCmdRefillHealthMana(const string_view parameter)
 	Player &myPlayer = *MyPlayer;
 	myPlayer.RestoreFullLife();
 	myPlayer.RestoreFullMana();
-	drawhpflag = true;
-	drawmanaflag = true;
+	RedrawComponent(PanelDrawComponent::Health);
+	RedrawComponent(PanelDrawComponent::Mana);
 
 	return "Ready for more.";
 }
@@ -583,7 +590,7 @@ std::string DebugCmdChangeMana(const string_view parameter)
 	int newMana = myPlayer._pMana + (change * 64);
 	myPlayer._pMana = newMana;
 	myPlayer._pManaBase = myPlayer._pMana + myPlayer._pMaxManaBase - myPlayer._pMaxMana;
-	drawmanaflag = true;
+	RedrawComponent(PanelDrawComponent::Mana);
 
 	return "Mana has changed.";
 }
@@ -929,7 +936,7 @@ std::string DebugCmdQuestInfo(const string_view parameter)
 std::string DebugCmdPlayerInfo(const string_view parameter)
 {
 	int playerId = atoi(parameter.data());
-	if (playerId < 0 || playerId >= MAX_PLRS)
+	if (static_cast<size_t>(playerId) >= Players.size())
 		return "My friend, we need a valid playerId.";
 	Player &player = Players[playerId];
 	if (!player.plractive)
@@ -947,6 +954,35 @@ std::string DebugCmdToggleFPS(const string_view parameter)
 {
 	frameflag = !frameflag;
 	return "";
+}
+
+std::string DebugCmdChangeTRN(const string_view parameter)
+{
+	std::stringstream paramsStream(parameter.data());
+	std::string first;
+	std::string out;
+	if (std::getline(paramsStream, first, ' ')) {
+		std::string second;
+		if (std::getline(paramsStream, second, ' ')) {
+			std::string prefix;
+			if (first == "mon") {
+				prefix = "monsters\\monsters\\";
+			} else if (first == "plr") {
+				prefix = "plrgfx\\";
+			}
+			debugTRN = prefix + second + ".trn";
+		} else {
+			debugTRN = first + ".trn";
+		}
+		out = fmt::format("I am a pretty butterfly. \n(Loading TRN: {:s})", debugTRN);
+	} else {
+		debugTRN = "";
+		out = "I am a big brown potato.";
+	}
+	auto &player = *MyPlayer;
+	InitPlayerGFX(player);
+	StartStand(player, player._pdir);
+	return out;
 }
 
 std::vector<DebugCmdItem> DebugCmdList = {
@@ -985,13 +1021,14 @@ std::vector<DebugCmdItem> DebugCmdList = {
 	{ "questinfo", "Shows info of quests.", "{id}", &DebugCmdQuestInfo },
 	{ "playerinfo", "Shows info of player.", "{playerid}", &DebugCmdPlayerInfo },
 	{ "fps", "Toggles displaying FPS", "", &DebugCmdToggleFPS },
+	{ "trn", "Makes player use TRN {trn} - Write 'plr' before it to look in plrgfx\\ or 'mon' to look in monsters\\monsters\\ - example: trn plr infra is equal to 'plrgfx\\infra.trn'", "{trn}", &DebugCmdChangeTRN },
 };
 
 } // namespace
 
 void LoadDebugGFX()
 {
-	pSquareCel = LoadCel("Data\\Square.CEL", 64);
+	pSquareCel = LoadCel("data\\square", 64);
 }
 
 void FreeDebugGFX()

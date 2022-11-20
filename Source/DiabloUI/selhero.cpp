@@ -39,7 +39,7 @@ char textStats[6][4];
 const char *title = "";
 _selhero_selections selhero_result;
 bool selhero_navigateYesNo;
-bool selhero_deleteEnabled;
+bool selhero_isSavegame;
 
 std::vector<std::unique_ptr<UiItemBase>> vecSelHeroDialog;
 std::vector<std::unique_ptr<UiListItem>> vecSelHeroDlgItems;
@@ -61,7 +61,7 @@ const char *SelheroGenerateName(HeroClass heroClass);
 
 void SelheroUiFocusNavigationYesNo()
 {
-	if (selhero_deleteEnabled)
+	if (selhero_isSavegame)
 		UiFocusNavigationYesNo();
 }
 
@@ -87,6 +87,19 @@ void SelheroSetStats()
 	CopyUtf8(textStats[5], StrCat(selhero_heroInfo.saveNumber), sizeof(textStats[5]));
 }
 
+void RenderDifficultyIndicators()
+{
+	if (!selhero_isSavegame)
+		return;
+	const uint16_t width = (*DifficultyIndicator[0])[0].width();
+	const uint16_t height = (*DifficultyIndicator[0])[0].height();
+	SDL_Rect rect = MakeSdlRect(SELHERO_DIALOG_HERO_IMG->m_rect.x, SELHERO_DIALOG_HERO_IMG->m_rect.y - height - 2, width, height);
+	for (int i = 0; i <= DIFF_LAST; i++) {
+		UiRenderItem(UiImageClx((*DifficultyIndicator[i < selhero_heroInfo.herorank ? 0 : 1])[0], rect, UiFlags::None));
+		rect.x += width;
+	}
+}
+
 UiArtTextButton *SELLIST_DIALOG_DELETE_BUTTON;
 
 bool SelHeroGetHeroInfo(_uiheroinfo *pInfo)
@@ -106,7 +119,7 @@ void SelheroListFocus(int value)
 		memcpy(&selhero_heroInfo, &selhero_heros[index], sizeof(selhero_heroInfo));
 		SelheroSetStats();
 		SELLIST_DIALOG_DELETE_BUTTON->SetFlags(baseFlags | UiFlags::ColorUiGold);
-		selhero_deleteEnabled = true;
+		selhero_isSavegame = true;
 		return;
 	}
 
@@ -114,12 +127,12 @@ void SelheroListFocus(int value)
 	for (char *textStat : textStats)
 		strcpy(textStat, "--");
 	SELLIST_DIALOG_DELETE_BUTTON->SetFlags(baseFlags | UiFlags::ColorUiSilver | UiFlags::ElementDisabled);
-	selhero_deleteEnabled = false;
+	selhero_isSavegame = false;
 }
 
 bool SelheroListDeleteYesNo()
 {
-	selhero_navigateYesNo = selhero_deleteEnabled;
+	selhero_navigateYesNo = selhero_isSavegame;
 
 	return selhero_navigateYesNo;
 }
@@ -234,7 +247,7 @@ void RemoveSelHeroBackground()
 
 void AddSelHeroBackground()
 {
-	LoadBackgroundArt("ui_art\\selhero.pcx");
+	LoadBackgroundArt("ui_art\\selhero");
 	vecSelHeroDialog.insert(vecSelHeroDialog.begin(),
 	    std::make_unique<UiImageClx>((*ArtBackground)[0], MakeSdlRect(0, GetUIRectangle().position.y, 0, 0), UiFlags::AlignCenter));
 }
@@ -242,7 +255,7 @@ void AddSelHeroBackground()
 void SelheroClassSelectorSelect(int value)
 {
 	auto hClass = static_cast<HeroClass>(vecSelHeroDlgItems[value]->m_value);
-	if (gbIsSpawn && (hClass == HeroClass::Rogue || hClass == HeroClass::Sorcerer || (hClass == HeroClass::Bard && !hfbard_mpq))) {
+	if (gbIsSpawn && (hClass == HeroClass::Rogue || hClass == HeroClass::Sorcerer || (hClass == HeroClass::Bard && !gbBard))) {
 		RemoveSelHeroBackground();
 		UiSelOkDialog(nullptr, _("The Rogue and Sorcerer are only available in the full retail version of Diablo. Visit https://www.gog.com/game/diablo to purchase.").data(), false);
 		AddSelHeroBackground();
@@ -332,8 +345,12 @@ void SelheroLoadSelect(int value)
 		// This means selhero's render loop will render selgame's items,
 		// which happens to work because the render loops are similar.
 		selhero_endMenu = false;
+
+		// Set this to false so that we do not attempt to render difficulty indicators.
+		selhero_isSavegame = false;
+
 		SelheroFree();
-		LoadBackgroundArt("ui_art\\selgame.pcx");
+		LoadBackgroundArt("ui_art\\selgame");
 		selgame_GameSelection_Select(0);
 	}
 
@@ -443,48 +460,37 @@ void selhero_Init()
 	const Point uiPosition = GetUIRectangle().position;
 
 	vecSelDlgItems.clear();
-	SDL_Rect rect1 = { (Sint16)(uiPosition.x + 24), (Sint16)(uiPosition.y + 161), 590, 35 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(&title, rect1, UiFlags::AlignCenter | UiFlags::FontSize30 | UiFlags::ColorUiSilver, 3));
+	SDL_Rect rect = MakeSdlRect(uiPosition.x + 24, uiPosition.y + 161, 590, 35);
+	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(&title, rect, UiFlags::AlignCenter | UiFlags::FontSize30 | UiFlags::ColorUiSilver, 3));
 
-	SDL_Rect rect2 = { (Sint16)(uiPosition.x + 30), (Sint16)(uiPosition.y + 211), 180, 76 };
-	auto heroImg = std::make_unique<UiImageClx>(UiGetHeroDialogSprite(0), rect2, UiFlags::None);
+	rect = MakeSdlRect(uiPosition.x + 30, uiPosition.y + 211, 180, 76);
+	auto heroImg = std::make_unique<UiImageClx>(UiGetHeroDialogSprite(0), rect, UiFlags::None);
 	SELHERO_DIALOG_HERO_IMG = heroImg.get();
 	vecSelHeroDialog.push_back(std::move(heroImg));
 
-	SDL_Rect rect3 = { (Sint16)(uiPosition.x + 39), (Sint16)(uiPosition.y + 323), 110, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Level:").data(), rect3, UiFlags::AlignRight | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
+	const UiFlags labelFlags = UiFlags::FontSize12 | UiFlags::ColorUiSilverDark | UiFlags::AlignRight;
+	const UiFlags valueFlags = UiFlags::FontSize12 | UiFlags::ColorUiSilverDark | UiFlags::AlignCenter;
+	const int labelX = uiPosition.x + 39;
+	const int valueX = uiPosition.x + 159;
+	const int labelWidth = 110;
+	const int valueWidth = 40;
+	const int statHeight = 21;
 
-	SDL_Rect rect4 = { (Sint16)(uiPosition.x + 39), (Sint16)(uiPosition.y + 323), 110, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Level:").data(), rect4, UiFlags::AlignRight | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-	SDL_Rect rect5 = { (Sint16)(uiPosition.x + 159), (Sint16)(uiPosition.y + 323), 40, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[0], rect5, UiFlags::AlignCenter | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
+	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Level:").data(), MakeSdlRect(labelX, uiPosition.y + 323, labelWidth, statHeight), labelFlags));
+	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[0], MakeSdlRect(valueX, uiPosition.y + 323, valueWidth, statHeight), valueFlags));
 
-	SDL_Rect rect6 = { (Sint16)(uiPosition.x + 39), (Sint16)(uiPosition.y + 358), 110, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Strength:").data(), rect6, UiFlags::AlignRight | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-	SDL_Rect rect7 = { (Sint16)(uiPosition.x + 159), (Sint16)(uiPosition.y + 358), 40, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[1], rect7, UiFlags::AlignCenter | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-
-	SDL_Rect rect8 = { (Sint16)(uiPosition.x + 39), (Sint16)(uiPosition.y + 380), 110, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Magic:").data(), rect8, UiFlags::AlignRight | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-	SDL_Rect rect9 = { (Sint16)(uiPosition.x + 159), (Sint16)(uiPosition.y + 380), 40, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[2], rect9, UiFlags::AlignCenter | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-
-	SDL_Rect rect10 = { (Sint16)(uiPosition.x + 39), (Sint16)(uiPosition.y + 401), 110, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Dexterity:").data(), rect10, UiFlags::AlignRight | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-	SDL_Rect rect11 = { (Sint16)(uiPosition.x + 159), (Sint16)(uiPosition.y + 401), 40, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[3], rect11, UiFlags::AlignCenter | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-
-	SDL_Rect rect12 = { (Sint16)(uiPosition.x + 39), (Sint16)(uiPosition.y + 422), 110, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Vitality:").data(), rect12, UiFlags::AlignRight | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-	SDL_Rect rect13 = { (Sint16)(uiPosition.x + 159), (Sint16)(uiPosition.y + 422), 40, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[4], rect13, UiFlags::AlignCenter | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-
+	const char *statLabels[] {
+		_("Strength:").data(), _("Magic:").data(), _("Dexterity:").data(), _("Vitality:").data(),
 #ifdef _DEBUG
-	SDL_Rect rect14 = { (Sint16)(uiPosition.x + 39), (Sint16)(uiPosition.y + 443), 110, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(_("Savegame:").data(), rect14, UiFlags::AlignRight | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
-	SDL_Rect rect15 = { (Sint16)(uiPosition.x + 159), (Sint16)(uiPosition.y + 443), 40, 21 };
-	vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[5], rect15, UiFlags::AlignCenter | UiFlags::FontSize12 | UiFlags::ColorUiSilverDark));
+		_("Savegame:").data()
 #endif
+	};
+	int statY = uiPosition.y + 358;
+	for (size_t i = 0; i < sizeof(statLabels) / sizeof(statLabels[0]); ++i) {
+		vecSelHeroDialog.push_back(std::make_unique<UiArtText>(statLabels[i], MakeSdlRect(labelX, statY, labelWidth, statHeight), labelFlags));
+		vecSelHeroDialog.push_back(std::make_unique<UiArtText>(textStats[i + 1], MakeSdlRect(valueX, statY, valueWidth, statHeight), valueFlags));
+		statY += statHeight;
+	}
 }
 
 void selhero_List_Init()
@@ -565,6 +571,7 @@ static void UiSelHeroDialog(
 		while (!selhero_endMenu && !selhero_navigateYesNo) {
 			UiClearScreen();
 			UiRenderItems(vecSelHeroDialog);
+			RenderDifficultyIndicators();
 			UiPollAndRender();
 		}
 		SelheroFree();

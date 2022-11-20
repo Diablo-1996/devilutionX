@@ -88,16 +88,16 @@ VirtualGamepadButtonType GetStandButtonType(bool isPressed)
 	return isPressed ? GAMEPAD_STANDDOWN : GAMEPAD_STAND;
 }
 
-void LoadButtonArt(Art *buttonArt, SDL_Renderer *renderer)
+void LoadButtonArt(ButtonTexture *buttonArt, SDL_Renderer *renderer)
 {
-	const int Frames = 26;
+	constexpr unsigned Sprites = 13;
+	constexpr unsigned Frames = 2;
 	buttonArt->surface.reset(LoadPNG("ui_art\\button.png"));
 	if (buttonArt->surface == nullptr)
 		return;
 
-	buttonArt->logical_width = buttonArt->surface->w;
-	buttonArt->frame_height = buttonArt->surface->h / Frames;
-	buttonArt->frames = Frames;
+	buttonArt->numSprites = Sprites;
+	buttonArt->numFrames = Frames;
 
 	if (renderer != nullptr) {
 		buttonArt->texture.reset(SDL_CreateTextureFromSurface(renderer, buttonArt->surface.get()));
@@ -105,7 +105,7 @@ void LoadButtonArt(Art *buttonArt, SDL_Renderer *renderer)
 	}
 }
 
-void LoadPotionArt(Art *potionArt, SDL_Renderer *renderer)
+void LoadPotionArt(ButtonTexture *potionArt, SDL_Renderer *renderer)
 {
 	item_cursor_graphic potionGraphics[] {
 		ICURS_POTION_OF_HEALING,
@@ -144,9 +144,7 @@ void LoadPotionArt(Art *potionArt, SDL_Renderer *renderer)
 		ClxDraw(Surface(surface.get()), position, GetInvItemSprite(cursorID));
 	}
 
-	potionArt->logical_width = potionSize.width;
-	potionArt->frame_height = potionSize.height;
-	potionArt->frames = sizeof(potionGraphics);
+	potionArt->numFrames = sizeof(potionGraphics);
 
 	if (renderer == nullptr) {
 		potionArt->surface.reset(SDL_ConvertSurfaceFormat(surface.get(), SDL_PIXELFORMAT_ARGB8888, 0));
@@ -176,12 +174,26 @@ bool InteractsWithCharButton(Point point)
 
 } // namespace
 
+Size ButtonTexture::size() const
+{
+	int w, h;
+	if (surface != nullptr) {
+		w = surface->w;
+		h = surface->h;
+	} else {
+		SDL_QueryTexture(texture.get(), /*format=*/nullptr, /*access=*/nullptr, &w, &h);
+	}
+	w /= numSprites;
+	h /= numFrames;
+	return Size { w, h };
+}
+
 void RenderVirtualGamepad(SDL_Renderer *renderer)
 {
 	if (!gbRunGame)
 		return;
 
-	RenderFunction renderFunction = [&](Art &art, SDL_Rect *src, SDL_Rect *dst) {
+	RenderFunction renderFunction = [renderer](const ButtonTexture &art, SDL_Rect *src, SDL_Rect *dst) {
 		if (art.texture == nullptr)
 			return;
 
@@ -197,7 +209,7 @@ void RenderVirtualGamepad(SDL_Surface *surface)
 	if (!gbRunGame)
 		return;
 
-	RenderFunction renderFunction = [&](Art &art, SDL_Rect *src, SDL_Rect *dst) {
+	RenderFunction renderFunction = [surface](const ButtonTexture &art, SDL_Rect *src, SDL_Rect *dst) {
 		if (art.surface == nullptr)
 			return;
 
@@ -308,14 +320,16 @@ void VirtualDirectionPadRenderer::RenderKnob(RenderFunction renderFunction)
 	renderFunction(knobArt, nullptr, &rect);
 }
 
-void VirtualPadButtonRenderer::Render(RenderFunction renderFunction, Art &buttonArt)
+void VirtualPadButtonRenderer::Render(RenderFunction renderFunction, const ButtonTexture &buttonArt)
 {
 	if (!virtualPadButton->isUsable())
 		return;
 
 	VirtualGamepadButtonType buttonType = GetButtonType();
-	int frame = buttonType;
-	int offset = buttonArt.h() * frame;
+	Size size = buttonArt.size();
+	const auto index = static_cast<unsigned>(buttonType);
+	const int xOffset = size.width * (index / buttonArt.numFrames);
+	const int yOffset = size.height * (index % buttonArt.numFrames);
 
 	auto center = virtualPadButton->area.position;
 	auto radius = virtualPadButton->area.radius;
@@ -326,12 +340,12 @@ void VirtualPadButtonRenderer::Render(RenderFunction renderFunction, Art &button
 	int width = diameter;
 	int height = diameter;
 
-	SDL_Rect src = MakeSdlRect(0, offset, buttonArt.w(), buttonArt.h());
+	SDL_Rect src = MakeSdlRect(xOffset, yOffset, size.width, size.height);
 	SDL_Rect dst = MakeSdlRect(x, y, width, height);
 	renderFunction(buttonArt, &src, &dst);
 }
 
-void PotionButtonRenderer::RenderPotion(RenderFunction renderFunction, Art &potionArt)
+void PotionButtonRenderer::RenderPotion(RenderFunction renderFunction, const ButtonTexture &potionArt)
 {
 	if (!virtualPadButton->isUsable())
 		return;
@@ -341,7 +355,8 @@ void PotionButtonRenderer::RenderPotion(RenderFunction renderFunction, Art &poti
 		return;
 
 	int frame = *potionType;
-	int offset = potionArt.h() * frame;
+	Size size = potionArt.size();
+	int offset = size.height * frame;
 
 	auto center = virtualPadButton->area.position;
 	auto radius = virtualPadButton->area.radius * 8 / 10;
@@ -352,7 +367,7 @@ void PotionButtonRenderer::RenderPotion(RenderFunction renderFunction, Art &poti
 	int width = diameter;
 	int height = diameter;
 
-	SDL_Rect src = MakeSdlRect(0, offset, potionArt.w(), potionArt.h());
+	SDL_Rect src = MakeSdlRect(0, offset, size.width, size.height);
 	SDL_Rect dst = MakeSdlRect(x, y, width, height);
 	renderFunction(potionArt, &src, &dst);
 }
@@ -496,20 +511,20 @@ void VirtualGamepadRenderer::UnloadArt()
 {
 	menuPanelRenderer.UnloadArt();
 	directionPadRenderer.UnloadArt();
-	buttonArt.Unload();
-	potionArt.Unload();
+	buttonArt.clear();
+	potionArt.clear();
 }
 
 void VirtualMenuPanelRenderer::UnloadArt()
 {
-	menuArt.Unload();
-	menuArtLevelUp.Unload();
+	menuArt.clear();
+	menuArtLevelUp.clear();
 }
 
 void VirtualDirectionPadRenderer::UnloadArt()
 {
-	padArt.Unload();
-	knobArt.Unload();
+	padArt.clear();
+	knobArt.clear();
 }
 
 void InitVirtualGamepadGFX(SDL_Renderer *renderer)

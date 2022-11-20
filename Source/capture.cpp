@@ -8,12 +8,14 @@
 #include <fstream>
 
 #include "DiabloUI/diabloui.h"
+#include "engine/backbuffer_state.hpp"
 #include "engine/dx.h"
 #include "engine/palette.h"
 #include "utils/file_util.h"
 #include "utils/log.hpp"
 #include "utils/paths.h"
 #include "utils/pcx.hpp"
+#include "utils/str_cat.hpp"
 #include "utils/ui_fwd.h"
 
 namespace devilution {
@@ -136,11 +138,11 @@ std::ofstream CaptureFile(std::string *dstPath)
 	std::time_t tt = std::time(nullptr);
 	std::tm *tm = std::localtime(&tt);
 	std::string filename = fmt::format("Screenshot from {:%Y-%m-%d %H-%M-%S}", *tm);
-	*dstPath = paths::PrefPath() + filename + ".PCX";
+	*dstPath = StrCat(paths::PrefPath(), filename, ".pcx");
 	int i = 0;
 	while (FileExists(dstPath->c_str())) {
 		i++;
-		*dstPath = paths::PrefPath() + filename + "-" + std::to_string(i) + ".PCX";
+		*dstPath = StrCat(paths::PrefPath(), filename, "-", i, ".pcx");
 	}
 	return std::ofstream(*dstPath, std::ios::binary | std::ios::trunc);
 }
@@ -194,7 +196,7 @@ void CaptureScreen()
 		system_palette[i] = palette[i];
 	}
 	palette_update();
-	force_redraw = 255;
+	RedrawEverything();
 }
 
 } // namespace devilution

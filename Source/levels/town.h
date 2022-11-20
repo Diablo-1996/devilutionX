@@ -25,6 +25,16 @@ bool OpensHive(Point position);
 bool OpensGrave(Point position);
 
 /**
+ * @brief Initiate opening of hive by sending network messages and updating quest state
+ */
+void OpenHive();
+
+/**
+ * @brief Initiate opening of grave by sending network messages and updating quest state
+ */
+void OpenGrave();
+
+/**
  * @brief Update the map to show the open hive
  */
 void TownOpenHive();
@@ -33,6 +43,11 @@ void TownOpenHive();
  * @brief Update the map to show the open grave
  */
 void TownOpenGrave();
+
+/**
+ * @brief Update town to show clean/not poisoned water fountain
+ */
+void CleanTownFountain();
 
 /**
  * @brief Initialize town level

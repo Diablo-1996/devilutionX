@@ -21,6 +21,12 @@
 #include "utils/sdl2_to_1_2_backports.h"
 #endif
 
+#ifdef _WIN32
+#define DIRECTORY_SEPARATOR_STR "\\"
+#else
+#define DIRECTORY_SEPARATOR_STR "/"
+#endif
+
 namespace devilution {
 
 namespace paths {
@@ -31,14 +37,6 @@ std::optional<std::string> basePath;
 std::optional<std::string> prefPath;
 std::optional<std::string> configPath;
 std::optional<std::string> assetsPath;
-
-#ifdef _WIN32
-constexpr char DirectorySeparator = '\\';
-#define DIRECTORY_SEPARATOR_STR "\\"
-#else
-constexpr char DirectorySeparator = '/';
-#define DIRECTORY_SEPARATOR_STR "/"
-#endif
 
 void AddTrailingSlash(std::string &path)
 {
@@ -90,9 +88,11 @@ const std::string &PrefPath()
 		prefPath = NxdkGetPrefPath();
 #else
 		prefPath = FromSDL(SDL_GetPrefPath("diasurgical", "devilution"));
+#if !defined(__amigaos__)
 		if (FileExistsAndIsWriteable("diablo.ini")) {
 			prefPath = std::string("." DIRECTORY_SEPARATOR_STR);
 		}
+#endif
 #endif
 	}
 	return *prefPath;
@@ -107,9 +107,11 @@ const std::string &ConfigPath()
 		configPath = NxdkGetPrefPath();
 #else
 		configPath = FromSDL(SDL_GetPrefPath("diasurgical", "devilution"));
+#if !defined(__amigaos__)
 		if (FileExistsAndIsWriteable("diablo.ini")) {
 			configPath = std::string("." DIRECTORY_SEPARATOR_STR);
 		}
+#endif
 #endif
 	}
 	return *configPath;
@@ -122,6 +124,8 @@ const std::string &AssetsPath()
 		assetsPath.emplace("assets/");
 #elif defined(NXDK)
 		assetsPath.emplace("D:\\assets\\");
+#elif defined(__3DS__) || defined(__SWITCH__)
+		assetsPath.emplace("romfs:/");
 #else
 		assetsPath.emplace(FromSDL(SDL_GetBasePath()) + ("assets" DIRECTORY_SEPARATOR_STR));
 #endif

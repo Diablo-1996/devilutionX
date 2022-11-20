@@ -8,10 +8,10 @@
 #include "DiabloUI/ui_flags.hpp"
 #include "automap.h"
 #include "controls/plrctrls.h"
-#include "controls/touch/renderers.h"
 #include "cursor.h"
 #include "dead.h"
 #include "doom.h"
+#include "engine/backbuffer_state.hpp"
 #include "engine/dx.h"
 #include "engine/render/clx_render.hpp"
 #include "engine/render/dun_render.hpp"
@@ -45,6 +45,10 @@
 #include "utils/endian.hpp"
 #include "utils/log.hpp"
 #include "utils/str_cat.hpp"
+
+#ifndef USE_SDL1
+#include "controls/touch/renderers.h"
+#endif
 
 #ifdef _DEBUG
 #include "debug.h"
@@ -88,6 +92,7 @@ extern void DrawControllerModifierHints(const Surface &out);
 bool frameflag;
 
 namespace {
+
 /**
  * @brief Hash algorithm for point
  */
@@ -120,28 +125,31 @@ bool CouldMissileCollide(Point tile, bool checkPlayerAndMonster)
 	return IsMissileBlockedByTile(tile);
 }
 
+void UpdateMissilePositionForRendering(Missile &m, int progress)
+{
+	DisplacementOf<int64_t> velocity = m.position.velocity;
+	velocity *= progress;
+	velocity /= AnimationInfo::baseValueFraction;
+	Displacement pixelsTravelled = (m.position.traveled + Displacement { static_cast<int>(velocity.deltaX), static_cast<int>(velocity.deltaY) }) >> 16;
+	Displacement tileOffset = pixelsTravelled.screenToMissile();
+
+	// calculcate the future missile position
+	m.position.tileForRendering = m.position.start + tileOffset;
+	m.position.offsetForRendering = pixelsTravelled + tileOffset.worldToScreen();
+}
+
 void UpdateMissileRendererData(Missile &m)
 {
 	m.position.tileForRendering = m.position.tile;
 	m.position.offsetForRendering = m.position.offset;
 
-	const MissileMovementDistrubution missileMovement = MissilesData[m._mitype].MovementDistribution;
+	const MissileMovementDistribution missileMovement = MissilesData[m._mitype].MovementDistribution;
 	// don't calculate missile position if they don't move
-	if (missileMovement == MissileMovementDistrubution::Disabled || m.position.velocity == Displacement {})
+	if (missileMovement == MissileMovementDistribution::Disabled || m.position.velocity == Displacement {})
 		return;
 
-	float fProgress = gfProgressToNextGameTick;
-	Displacement velocity = m.position.velocity * fProgress;
-	Displacement traveled = m.position.traveled + velocity;
-
-	int mx = traveled.deltaX >> 16;
-	int my = traveled.deltaY >> 16;
-	int dx = (mx + 2 * my) / 64;
-	int dy = (2 * my - mx) / 64;
-
-	// calculcate the future missile position
-	m.position.tileForRendering = m.position.start + Displacement { dx, dy };
-	m.position.offsetForRendering = { mx + (dy * 32) - (dx * 32), my - (dx * 16) - (dy * 16) };
+	int progress = ProgressToNextGameTick;
+	UpdateMissilePositionForRendering(m, progress);
 
 	// In some cases this calculcated position is invalid.
 	// For example a missile shouldn't move inside a wall.
@@ -153,31 +161,22 @@ void UpdateMissileRendererData(Missile &m)
 		return;
 
 	// If no collision can happen at the new tile we can advance
-	if (!CouldMissileCollide(m.position.tileForRendering, missileMovement == MissileMovementDistrubution::Blockable))
+	if (!CouldMissileCollide(m.position.tileForRendering, missileMovement == MissileMovementDistribution::Blockable))
 		return;
 
 	// The new tile could be invalid, so don't advance to it.
 	// We search the last offset that is in the old (valid) tile.
 	// Implementation note: If someone knows the correct math to calculate this without the loop, I would really appreciate it.
 	while (m.position.tile != m.position.tileForRendering) {
-		fProgress -= 0.01F;
+		progress -= 1;
 
-		if (fProgress <= 0.0F) {
+		if (progress <= 0) {
 			m.position.tileForRendering = m.position.tile;
 			m.position.offsetForRendering = m.position.offset;
 			return;
 		}
 
-		velocity = m.position.velocity * fProgress;
-		traveled = m.position.traveled + velocity;
-
-		mx = traveled.deltaX >> 16;
-		my = traveled.deltaY >> 16;
-		dx = (mx + 2 * my) / 64;
-		dy = (2 * my - mx) / 64;
-
-		m.position.tileForRendering = m.position.start + Displacement { dx, dy };
-		m.position.offsetForRendering = { mx + (dy * 32) - (dx * 32), my - (dx * 16) - (dy * 16) };
+		UpdateMissilePositionForRendering(m, progress);
 	}
 }
 
@@ -190,21 +189,6 @@ void UpdateMissilesRendererData()
 		MissilesAtRenderingTile.insert(std::make_pair(m.position.tileForRendering, &m));
 	}
 }
-
-uint32_t sgdwCursWdtOld;
-int sgdwCursX;
-int sgdwCursY;
-/**
- * Lower bound of back buffer.
- */
-uint32_t sgdwCursHgt;
-
-int sgdwCursXOld;
-int sgdwCursYOld;
-
-uint32_t sgdwCursWdt;
-uint8_t sgSaveBack[8192];
-uint32_t sgdwCursHgtOld;
 
 /**
  * @brief Keeps track of which tiles have been rendered already.
@@ -228,10 +212,12 @@ const char *const PlayerModeNames[] = {
 	"quitting"
 };
 
-void BlitCursor(uint8_t *dst, std::uint32_t dstPitch, uint8_t *src, std::uint32_t srcPitch)
+Rectangle PrevCursorRect;
+
+void BlitCursor(uint8_t *dst, uint32_t dstPitch, uint8_t *src, uint32_t srcPitch, uint32_t srcWidth, uint32_t srcHeight)
 {
-	for (std::uint32_t i = 0; i < sgdwCursHgt; ++i, src += srcPitch, dst += dstPitch) {
-		memcpy(dst, src, sgdwCursWdt);
+	for (std::uint32_t i = 0; i < srcHeight; ++i, src += srcPitch, dst += dstPitch) {
+		memcpy(dst, src, srcWidth);
 	}
 }
 
@@ -240,17 +226,9 @@ void BlitCursor(uint8_t *dst, std::uint32_t dstPitch, uint8_t *src, std::uint32_
  */
 void UndrawCursor(const Surface &out)
 {
-	if (sgdwCursWdt == 0) {
-		return;
-	}
-
-	BlitCursor(out.at(sgdwCursX, sgdwCursY), out.pitch(), sgSaveBack, sgdwCursWdt);
-
-	sgdwCursXOld = sgdwCursX;
-	sgdwCursYOld = sgdwCursY;
-	sgdwCursWdtOld = sgdwCursWdt;
-	sgdwCursHgtOld = sgdwCursHgt;
-	sgdwCursWdt = 0;
+	DrawnCursor &cursor = GetDrawnCursor();
+	BlitCursor(&out[cursor.rect.position], out.pitch(), cursor.behindBuffer, cursor.rect.size.width, cursor.rect.size.width, cursor.rect.size.height);
+	PrevCursorRect = cursor.rect;
 }
 
 bool ShouldShowCursor()
@@ -272,23 +250,23 @@ bool ShouldShowCursor()
  */
 void DrawCursor(const Surface &out)
 {
+	DrawnCursor &cursor = GetDrawnCursor();
 	if (pcurs <= CURSOR_NONE || !ShouldShowCursor()) {
+		cursor.rect.size.width = 0;
 		return;
 	}
 
 	Size cursSize = GetInvItemSize(pcurs);
 	if (cursSize.width == 0 || cursSize.height == 0) {
+		cursor.rect.size.width = 0;
 		return;
 	}
 
-	// Copy the buffer before the item cursor and its 1px outline are drawn to a temporary buffer.
-	const int outlineWidth = !MyPlayer->HoldItem.isEmpty() ? 1 : 0;
-
-	if (MousePosition.x < -cursSize.width - outlineWidth || MousePosition.x - outlineWidth >= out.w() || MousePosition.y < -cursSize.height - outlineWidth || MousePosition.y - outlineWidth >= out.h())
-		return;
-
-	constexpr auto Clip = [](int &pos, std::uint32_t &length, std::uint32_t posEnd) {
-		if (pos < 0) {
+	constexpr auto Clip = [](int &pos, int &length, int posEnd) {
+		if (pos + length <= 0 || pos >= posEnd) {
+			pos = 0;
+			length = 0;
+		} else if (pos < 0) {
 			length += pos;
 			pos = 0;
 		} else if (pos + length > posEnd) {
@@ -296,15 +274,22 @@ void DrawCursor(const Surface &out)
 		}
 	};
 
-	sgdwCursX = MousePosition.x - outlineWidth;
-	sgdwCursWdt = cursSize.width + 2 * outlineWidth;
-	Clip(sgdwCursX, sgdwCursWdt, out.w());
+	// Copy the buffer before the item cursor and its 1px outline are drawn to a temporary buffer.
+	const int outlineWidth = !MyPlayer->HoldItem.isEmpty() ? 1 : 0;
 
-	sgdwCursY = MousePosition.y - outlineWidth;
-	sgdwCursHgt = cursSize.height + 2 * outlineWidth;
-	Clip(sgdwCursY, sgdwCursHgt, out.h());
+	Rectangle &rect = cursor.rect;
+	rect.position.x = MousePosition.x - outlineWidth;
+	rect.size.width = cursSize.width + 2 * outlineWidth;
+	Clip(rect.position.x, rect.size.width, out.w());
 
-	BlitCursor(sgSaveBack, sgdwCursWdt, out.at(sgdwCursX, sgdwCursY), out.pitch());
+	rect.position.y = MousePosition.y - outlineWidth;
+	rect.size.height = cursSize.height + 2 * outlineWidth;
+	Clip(rect.position.y, rect.size.height, out.h());
+
+	if (rect.size.width == 0 || rect.size.height == 0)
+		return;
+
+	BlitCursor(cursor.behindBuffer, rect.size.width, &out[rect.position], out.pitch(), rect.size.width, rect.size.height);
 	DrawSoftwareCursor(out, MousePosition + Displacement { 0, cursSize.height - 1 }, pcurs);
 }
 
@@ -358,67 +343,6 @@ void DrawMonster(const Surface &out, Point tilePosition, Point targetBufferPosit
 		Log("Draw Monster \"{}\": NULL Cel Buffer", monster.name());
 		return;
 	}
-
-	constexpr auto getMonsterModeDisplayName = [](MonsterMode monsterMode) {
-		switch (monsterMode) {
-		case MonsterMode::Stand:
-			return "standing";
-
-		case MonsterMode::MoveNorthwards:
-			return "moving (northwards)";
-
-		case MonsterMode::MoveSouthwards:
-			return "moving (southwards)";
-
-		case MonsterMode::MoveSideways:
-			return "moving (sideways)";
-
-		case MonsterMode::MeleeAttack:
-			return "attacking (melee)";
-
-		case MonsterMode::HitRecovery:
-			return "getting hit";
-
-		case MonsterMode::Death:
-			return "dying";
-
-		case MonsterMode::SpecialMeleeAttack:
-			return "attacking (special melee)";
-
-		case MonsterMode::FadeIn:
-			return "fading in";
-
-		case MonsterMode::FadeOut:
-			return "fading out";
-
-		case MonsterMode::RangedAttack:
-			return "attacking (ranged)";
-
-		case MonsterMode::SpecialStand:
-			return "standing (special)";
-
-		case MonsterMode::SpecialRangedAttack:
-			return "attacking (special ranged)";
-
-		case MonsterMode::Delay:
-			return "delaying";
-
-		case MonsterMode::Charge:
-			return "charging";
-
-		case MonsterMode::Petrified:
-			return "petrified";
-
-		case MonsterMode::Heal:
-			return "healing";
-
-		case MonsterMode::Talk:
-			return "talking";
-
-		default:
-			app_fatal("Invalid monster mode.");
-		}
-	};
 
 	const ClxSprite sprite = monster.animInfo.currentSprite();
 
@@ -493,7 +417,7 @@ void DrawPlayer(const Surface &out, const Player &player, Point tilePosition, Po
 
 	Point spriteBufferPosition = targetBufferPosition - Displacement { CalculateWidth2(sprite.width()), 0 };
 
-	if (pcursplr >= 0 && pcursplr < MAX_PLRS && &player == &Players[pcursplr])
+	if (static_cast<size_t>(pcursplr) < Players.size() && &player == &Players[pcursplr])
 		ClxDrawOutlineSkipColorZero(out, 165, spriteBufferPosition, sprite);
 
 	if (&player == MyPlayer) {
@@ -660,7 +584,7 @@ void DrawItem(const Surface &out, Point tilePosition, Point targetBufferPosition
 		ClxDrawOutlineSkipColorZero(out, GetOutlineColor(item, false), position, sprite);
 	}
 	ClxDrawLight(out, position, sprite);
-	if (item.AnimInfo.currentFrame == item.AnimInfo.numberOfFrames - 1 || item._iCurs == ICURS_MAGIC_ROCK)
+	if (item.AnimInfo.isLastFrame() || item._iCurs == ICURS_MAGIC_ROCK)
 		AddItemToLabelQueue(bItem - 1, px, targetBufferPosition.y);
 }
 
@@ -796,7 +720,7 @@ void DrawDungeon(const Surface &out, Point tilePosition, Point targetBufferPosit
 		DrawDeadPlayer(out, tilePosition, targetBufferPosition);
 	}
 	int8_t playerId = dPlayer[tilePosition.x][tilePosition.y];
-	if (playerId > 0 && playerId <= MAX_PLRS) {
+	if (static_cast<size_t>(playerId - 1) < Players.size()) {
 		DrawPlayerHelper(out, Players[playerId - 1], tilePosition, targetBufferPosition);
 	}
 	if (dMonster[tilePosition.x][tilePosition.y] != 0) {
@@ -1054,6 +978,8 @@ void DrawGame(const Surface &fullOut, Point position)
 	// Draw areas moving in and out of the screen
 	if (myPlayer.IsWalking()) {
 		switch (myPlayer._pdir) {
+		case Direction::NoDirection:
+			break;
 		case Direction::North:
 			sy -= TILE_HEIGHT;
 			position += Direction::North;
@@ -1122,7 +1048,7 @@ void DrawView(const Surface &out, Point startPosition)
 	bool debugGridTextNeeded = IsDebugGridTextNeeded();
 	if (debugGridTextNeeded || DebugGrid) {
 		// force redrawing or debug stuff stays on panel on 640x480 resolution
-		force_redraw = 255;
+		RedrawEverything();
 		char debugGridTextBuffer[10];
 		bool megaTiles = IsDebugGridInMegatiles();
 
@@ -1269,27 +1195,29 @@ void DrawFPS(const Surface &out)
 
 /**
  * @brief Update part of the screen from the back buffer
- * @param dwX Back buffer coordinate
- * @param dwY Back buffer coordinate
- * @param dwWdt Back buffer coordinate
- * @param dwHgt Back buffer coordinate
+ * @param x Back buffer coordinate
+ * @param y Back buffer coordinate
+ * @param w Back buffer coordinate
+ * @param h Back buffer coordinate
  */
-void DoBlitScreen(Sint16 dwX, Sint16 dwY, Uint16 dwWdt, Uint16 dwHgt)
+void DoBlitScreen(int x, int y, int w, int h)
 {
-	// In SDL1 SDL_Rect x and y are Sint16. Cast explicitly to avoid a compiler warning.
-	using CoordType = decltype(SDL_Rect {}.x);
-	SDL_Rect srcRect {
-		static_cast<CoordType>(dwX),
-		static_cast<CoordType>(dwY),
-		dwWdt, dwHgt
-	};
-	SDL_Rect dstRect { dwX, dwY, dwWdt, dwHgt };
-
+#ifdef DEBUG_DO_BLIT_SCREEN
+	const Surface &out = GlobalBackBuffer();
+	const uint8_t debugColor = PAL8_RED;
+	DrawHorizontalLine(out, Point(x, y), w, debugColor);
+	DrawHorizontalLine(out, Point(x, y + h - 1), w, debugColor);
+	DrawVerticalLine(out, Point(x, y), h, debugColor);
+	DrawVerticalLine(out, Point(x + w - 1, y), h, debugColor);
+#endif
+	SDL_Rect srcRect = MakeSdlRect(x, y, w, h);
+	SDL_Rect dstRect = MakeSdlRect(x, y, w, h);
 	BltFast(&srcRect, &dstRect);
 }
 
 /**
- * @brief Check render pipeline and blit individual screen parts
+ * @brief Check render pipeline and update individual screen parts
+ * @param out Output surface.
  * @param dwHgt Section of screen to update from top to bottom
  * @param drawDesc Render info box
  * @param drawHp Render health bar
@@ -1297,7 +1225,7 @@ void DoBlitScreen(Sint16 dwX, Sint16 dwY, Uint16 dwWdt, Uint16 dwHgt)
  * @param drawSbar Render belt
  * @param drawBtn Render panel buttons
  */
-void DrawMain(int dwHgt, bool drawDesc, bool drawHp, bool drawMana, bool drawSbar, bool drawBtn)
+void DrawMain(const Surface &out, int dwHgt, bool drawDesc, bool drawHp, bool drawMana, bool drawSbar, bool drawBtn)
 {
 	if (!gbActive || RenderDirectlyToOutputSurface) {
 		return;
@@ -1314,7 +1242,12 @@ void DrawMain(int dwHgt, bool drawDesc, bool drawHp, bool drawMana, bool drawSba
 			DoBlitScreen(mainPanelPosition.x + 204, mainPanelPosition.y + 5, 232, 28);
 		}
 		if (drawDesc) {
-			DoBlitScreen(mainPanelPosition.x + 176, mainPanelPosition.y + 46, 288, 63);
+			if (talkflag) {
+				// When chat input is displayed, the belt is hidden and the chat moves up.
+				DoBlitScreen(mainPanelPosition.x + 171, mainPanelPosition.y + 6, 298, 116);
+			} else {
+				DoBlitScreen(mainPanelPosition.x + 176, mainPanelPosition.y + 46, 288, 63);
+			}
 		}
 		if (drawMana) {
 			DoBlitScreen(mainPanelPosition.x + 460, mainPanelPosition.y, 88, 72);
@@ -1324,18 +1257,19 @@ void DrawMain(int dwHgt, bool drawDesc, bool drawHp, bool drawMana, bool drawSba
 			DoBlitScreen(mainPanelPosition.x + 96, mainPanelPosition.y, 88, 72);
 		}
 		if (drawBtn) {
-			DoBlitScreen(mainPanelPosition.x + 8, mainPanelPosition.y + 5, 72, 119);
-			DoBlitScreen(mainPanelPosition.x + 556, mainPanelPosition.y + 5, 72, 48);
+			DoBlitScreen(mainPanelPosition.x + 8, mainPanelPosition.y + 7, 74, 114);
+			DoBlitScreen(mainPanelPosition.x + 559, mainPanelPosition.y + 7, 74, 48);
 			if (gbIsMultiplayer) {
-				DoBlitScreen(mainPanelPosition.x + 84, mainPanelPosition.y + 91, 36, 32);
-				DoBlitScreen(mainPanelPosition.x + 524, mainPanelPosition.y + 91, 36, 32);
+				DoBlitScreen(mainPanelPosition.x + 86, mainPanelPosition.y + 91, 34, 32);
+				DoBlitScreen(mainPanelPosition.x + 526, mainPanelPosition.y + 91, 34, 32);
 			}
 		}
-		if (sgdwCursWdtOld != 0) {
-			DoBlitScreen(sgdwCursXOld, sgdwCursYOld, sgdwCursWdtOld, sgdwCursHgtOld);
+		if (PrevCursorRect.size.width != 0 && PrevCursorRect.size.height != 0) {
+			DoBlitScreen(PrevCursorRect.position.x, PrevCursorRect.position.y, PrevCursorRect.size.width, PrevCursorRect.size.height);
 		}
-		if (sgdwCursWdt != 0) {
-			DoBlitScreen(sgdwCursX, sgdwCursY, sgdwCursWdt, sgdwCursHgt);
+		Rectangle &cursorRect = GetDrawnCursor().rect;
+		if (cursorRect.size.width != 0 && cursorRect.size.height != 0) {
+			DoBlitScreen(cursorRect.position.x, cursorRect.position.y, cursorRect.size.width, cursorRect.size.height);
 		}
 	}
 }
@@ -1350,9 +1284,10 @@ Displacement GetOffsetForWalking(const AnimationInfo &animationInfo, const Direc
 	constexpr Displacement MovingOffset[8]   = { {   0,  32 }, { -32,  16 }, { -64,   0 }, { -32, -16 }, {   0, -32 }, {  32, -16 },  {  64,   0 }, {  32,  16 } };
 	// clang-format on
 
-	float fAnimationProgress = animationInfo.getAnimationProgress();
+	uint8_t animationProgress = animationInfo.getAnimationProgress();
 	Displacement offset = MovingOffset[static_cast<size_t>(dir)];
-	offset *= fAnimationProgress;
+	offset *= animationProgress;
+	offset /= AnimationInfo::baseValueFraction;
 
 	if (cameraMode) {
 		offset = -offset;
@@ -1365,8 +1300,7 @@ Displacement GetOffsetForWalking(const AnimationInfo &animationInfo, const Direc
 
 void ClearCursor() // CODE_FIX: this was supposed to be in cursor.cpp
 {
-	sgdwCursWdt = 0;
-	sgdwCursWdtOld = 0;
+	PrevCursorRect = {};
 }
 
 void ShiftGrid(int *x, int *y, int horizontal, int vertical)
@@ -1574,24 +1508,23 @@ void scrollrt_draw_game_screen()
 
 	int hgt = 0;
 
-	if (force_redraw == 255) {
-		force_redraw = 0;
+	if (IsRedrawEverything()) {
+		RedrawComplete();
 		hgt = gnScreenHeight;
 	}
+
+	const Surface &out = GlobalBackBuffer();
+	UndrawCursor(out);
+
+	DrawMain(out, hgt, false, false, false, false, false);
 
 	if (IsHardwareCursor()) {
 		SetHardwareCursorVisible(ShouldShowCursor());
 	} else {
-		DrawCursor(GlobalBackBuffer());
+		DrawCursor(out);
 	}
-
-	DrawMain(hgt, false, false, false, false, false);
 
 	RenderPresent();
-
-	if (!IsHardwareCursor()) {
-		UndrawCursor(GlobalBackBuffer());
-	}
 }
 
 void DrawAndBlit()
@@ -1601,26 +1534,29 @@ void DrawAndBlit()
 	}
 
 	int hgt = 0;
-	bool ddsdesc = false;
-	bool ctrlPan = false;
+	bool drawHealth = IsRedrawComponent(PanelDrawComponent::Health);
+	bool drawMana = IsRedrawComponent(PanelDrawComponent::Mana);
+	bool drawControlButtons = IsRedrawComponent(PanelDrawComponent::ControlButtons);
+	bool drawBelt = IsRedrawComponent(PanelDrawComponent::Belt);
+	bool drawChatInput = talkflag;
+	bool drawInfoBox = false;
+	bool drawCtrlPan = false;
 
 	const Rectangle &mainPanel = GetMainPanel();
 
-	if (gnScreenWidth > mainPanel.size.width || force_redraw == 255 || IsHighlightingLabelsEnabled()) {
-		drawhpflag = true;
-		drawmanaflag = true;
-		drawbtnflag = true;
-		drawsbarflag = true;
-		ddsdesc = false;
-		ctrlPan = true;
+	if (gnScreenWidth > mainPanel.size.width || IsRedrawEverything() || IsHighlightingLabelsEnabled()) {
+		drawHealth = true;
+		drawMana = true;
+		drawControlButtons = true;
+		drawBelt = true;
+		drawInfoBox = false;
+		drawCtrlPan = true;
 		hgt = gnScreenHeight;
-	} else if (force_redraw == 1) {
-		ddsdesc = true;
-		ctrlPan = false;
+	} else if (IsRedrawViewport()) {
+		drawInfoBox = true;
+		drawCtrlPan = false;
 		hgt = gnViewportHeight;
 	}
-
-	force_redraw = 0;
 
 	const Surface &out = GlobalBackBuffer();
 	UndrawCursor(out);
@@ -1628,26 +1564,25 @@ void DrawAndBlit()
 	nthread_UpdateProgressToNextGameTick();
 
 	DrawView(out, ViewPosition);
-	if (ctrlPan) {
+	if (drawCtrlPan) {
 		DrawCtrlPan(out);
 	}
-	if (drawhpflag) {
+	if (drawHealth) {
 		DrawLifeFlaskLower(out);
 	}
-	if (drawmanaflag) {
+	if (drawMana) {
 		DrawManaFlaskLower(out);
 
 		DrawSpell(out);
 	}
-	if (drawbtnflag) {
+	if (drawControlButtons) {
 		DrawCtrlBtns(out);
 	}
-	if (drawsbarflag) {
+	if (drawBelt) {
 		DrawInvBelt(out);
 	}
-	if (talkflag) {
+	if (drawChatInput) {
 		DrawTalkPan(out);
-		hgt = gnScreenHeight;
 	}
 	DrawXPBar(out);
 	if (*sgOptions.Graphics.showHealthValues)
@@ -1663,14 +1598,16 @@ void DrawAndBlit()
 
 	DrawFPS(out);
 
-	DrawMain(hgt, ddsdesc, drawhpflag, drawmanaflag, drawsbarflag, drawbtnflag);
+	DrawMain(out, hgt, drawInfoBox, drawHealth, drawMana, drawBelt, drawControlButtons);
+
+	RedrawComplete();
+	for (PanelDrawComponent component : enum_values<PanelDrawComponent>()) {
+		if (IsRedrawComponent(component)) {
+			RedrawComponentComplete(component);
+		}
+	}
 
 	RenderPresent();
-
-	drawhpflag = false;
-	drawmanaflag = false;
-	drawbtnflag = false;
-	drawsbarflag = false;
 }
 
 } // namespace devilution

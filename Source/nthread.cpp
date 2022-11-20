@@ -24,7 +24,7 @@ uintptr_t glpMsgTbl[MAX_PLRS];
 uint32_t gdwLargestMsgSize;
 uint32_t gdwNormalMsgSize;
 int last_tick;
-float gfProgressToNextGameTick = 0.0;
+uint8_t ProgressToNextGameTick = 0;
 
 namespace {
 
@@ -216,9 +216,23 @@ bool nthread_has_500ms_passed()
 {
 	int currentTickCount = SDL_GetTicks();
 	int ticksElapsed = currentTickCount - last_tick;
-	if (!gbIsMultiplayer && ticksElapsed > gnTickDelay * 10) {
-		last_tick = currentTickCount;
-		ticksElapsed = 0;
+	// Check if we missed multiple game ticks (> 10)
+	if (ticksElapsed > gnTickDelay * 10) {
+		bool resetLastTick = true;
+		if (gbIsMultiplayer) {
+			for (size_t i = 0; i < Players.size(); i++) {
+				if ((player_state[i] & PS_CONNECTED) != 0 && i != MyPlayerId) {
+					// Reset last tick is not allowed when other players are connected, cause the elapsed time is needed to sync the game ticks between the clients
+					resetLastTick = false;
+					break;
+				}
+			}
+		}
+		if (resetLastTick) {
+			// Reset last tick to avoid caught up of all missed game ticks (game speed is dramatically increased for a short time)
+			last_tick = currentTickCount;
+			ticksElapsed = 0;
+		}
 	}
 	return ticksElapsed >= 0;
 }
@@ -228,18 +242,15 @@ void nthread_UpdateProgressToNextGameTick()
 	if (!gbRunGame || PauseMode != 0 || (!gbIsMultiplayer && gmenu_is_active()) || !gbProcessPlayers || demo::IsRunning()) // if game is not running or paused there is no next gametick in the near future
 		return;
 	int currentTickCount = SDL_GetTicks();
-	int ticksElapsed = last_tick - currentTickCount;
-	if (ticksElapsed <= 0) {
-		gfProgressToNextGameTick = 1.0; // game tick is due
+	int ticksMissing = last_tick - currentTickCount;
+	if (ticksMissing <= 0) {
+		ProgressToNextGameTick = AnimationInfo::baseValueFraction; // game tick is due
 		return;
 	}
-	int ticksAdvanced = gnTickDelay - ticksElapsed;
-	float fraction = (float)ticksAdvanced / (float)gnTickDelay;
-	if (fraction > 1.0)
-		gfProgressToNextGameTick = 1.0;
-	if (fraction < 0.0)
-		gfProgressToNextGameTick = 0.0;
-	gfProgressToNextGameTick = fraction;
+	int ticksAdvanced = gnTickDelay - ticksMissing;
+	int32_t fraction = ticksAdvanced * AnimationInfo::baseValueFraction / gnTickDelay;
+	fraction = clamp<int32_t>(fraction, 0, AnimationInfo::baseValueFraction);
+	ProgressToNextGameTick = static_cast<uint8_t>(fraction);
 }
 
 } // namespace devilution

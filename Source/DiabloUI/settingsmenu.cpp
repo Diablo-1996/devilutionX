@@ -1,5 +1,7 @@
 #include "selstart.h"
 
+#include <function_ref.hpp>
+
 #include "DiabloUI/diabloui.h"
 #include "DiabloUI/scrollbar.h"
 #include "control.h"
@@ -9,6 +11,7 @@
 #include "miniwin/misc_msg.h"
 #include "options.h"
 #include "utils/language.h"
+#include "utils/stdcompat/optional.hpp"
 #include "utils/utf8.hpp"
 
 namespace devilution {
@@ -24,7 +27,7 @@ std::vector<std::unique_ptr<UiItemBase>> vecDialog;
 std::vector<OptionEntryBase *> vecOptions;
 OptionEntryBase *selectedOption = nullptr;
 
-enum class ShownMenuType {
+enum class ShownMenuType : uint8_t {
 	Settings,
 	ListOption,
 	KeyInput,
@@ -37,7 +40,7 @@ char optionDescription[512];
 Rectangle rectList;
 Rectangle rectDescription;
 
-enum class SpecialMenuEntry {
+enum class SpecialMenuEntry : int8_t {
 	None = -1,
 	PreviousMenu = -2,
 	UnbindKey = -3,
@@ -46,9 +49,9 @@ enum class SpecialMenuEntry {
 bool IsValidEntry(OptionEntryBase *pOptionEntry)
 {
 	auto flags = pOptionEntry->GetFlags();
-	if (HasAnyOf(flags, OptionEntryFlags::NeedDiabloMpq) && !diabdat_mpq)
+	if (HasAnyOf(flags, OptionEntryFlags::NeedDiabloMpq) && !HaveDiabdat())
 		return false;
-	if (HasAnyOf(flags, OptionEntryFlags::NeedHellfireMpq) && !hellfire_mpq)
+	if (HasAnyOf(flags, OptionEntryFlags::NeedHellfireMpq) && !HaveHellfire())
 		return false;
 	return HasNoneOf(flags, OptionEntryFlags::Invisible | (gbIsHellfire ? OptionEntryFlags::OnlyDiablo : OptionEntryFlags::OnlyHellfire));
 }
@@ -128,6 +131,7 @@ bool ChangeOptionValue(OptionEntryBase *pOption, size_t listIndex)
 		pOptionList->SetActiveListIndex(listIndex);
 	} break;
 	case OptionEntryType::Key:
+	case OptionEntryType::PadButton:
 		break;
 	}
 
@@ -267,7 +271,7 @@ void UiSettingsMenu()
 		vecDialog.push_back(std::make_unique<UiArtText>(optionDescription, MakeSdlRect(rectDescription), UiFlags::FontSize12 | UiFlags::ColorUiSilverDark | UiFlags::AlignCenter, 1, IsSmallFontTall() ? 22 : 18));
 
 		size_t itemToSelect = 1;
-		std::function<bool(SDL_Event &)> eventHandler;
+		std::optional<tl::function_ref<bool(SDL_Event &)>> eventHandler;
 
 		switch (shownMenu) {
 		case ShownMenuType::Settings: {
@@ -318,10 +322,10 @@ void UiSettingsMenu()
 				case SDL_KEYDOWN: {
 					SDL_Keycode keycode = event.key.keysym.sym;
 					remap_keyboard_key(&keycode);
+					key = static_cast<uint32_t>(keycode);
 					if (key >= SDLK_a && key <= SDLK_z) {
 						key -= 'a' - 'A';
 					}
-					key = static_cast<uint32_t>(keycode);
 				} break;
 				case SDL_MOUSEBUTTONDOWN:
 					switch (event.button.button) {

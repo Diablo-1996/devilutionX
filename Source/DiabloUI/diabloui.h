@@ -5,11 +5,14 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "DiabloUI/art.h"
+#include <function_ref.hpp>
+
 #include "DiabloUI/ui_item.h"
 #include "engine/clx_sprite.hpp"
+#include "engine/load_pcx.hpp" // IWYU pragma: export
 #include "player.h"
 #include "utils/display.h"
+#include "utils/stdcompat/optional.hpp"
 
 namespace devilution {
 
@@ -62,10 +65,11 @@ struct _uiheroinfo {
 };
 
 extern OptionalOwnedClxSpriteList ArtLogo;
+extern std::array<OptionalOwnedClxSpriteList, 2> DifficultyIndicator;
 extern std::array<OptionalOwnedClxSpriteList, 3> ArtFocus;
 extern OptionalOwnedClxSpriteList ArtBackgroundWidescreen;
 extern OptionalOwnedClxSpriteList ArtBackground;
-extern Art ArtCursor;
+extern OptionalOwnedClxSpriteList ArtCursor;
 
 extern bool (*gfnHeroInfo)(bool (*fninfofunc)(_uiheroinfo *));
 
@@ -94,6 +98,7 @@ bool UiItemMouseEvents(SDL_Event *event, const std::vector<std::unique_ptr<UiIte
 Sint16 GetCenterOffset(Sint16 w, Sint16 bw = 0);
 void LoadPalInMem(const SDL_Color *pPal);
 void DrawMouse();
+void UiLoadDefaultPalette();
 bool UiLoadBlackBackground();
 void LoadBackgroundArt(const char *pszFile, int frames = 1);
 void UiAddBackground(std::vector<std::unique_ptr<UiItemBase>> *vecDialog);
@@ -103,7 +108,8 @@ void UiFocusNavigationEsc();
 void UiFocusNavigationYesNo();
 void UiInitList(void (*fnFocus)(int value), void (*fnSelect)(int value), void (*fnEsc)(), const std::vector<std::unique_ptr<UiItemBase>> &items, bool wraps = false, void (*fnFullscreen)() = nullptr, bool (*fnYesNo)() = nullptr, size_t selectedItem = 0);
 void UiClearScreen();
-void UiPollAndRender(std::function<bool(SDL_Event &)> eventHandler = nullptr);
+void UiPollAndRender(std::optional<tl::function_ref<bool(SDL_Event &)>> eventHandler = std::nullopt);
+void UiRenderItem(const UiItemBase &item);
 void UiRenderItems(const std::vector<UiItemBase *> &items);
 void UiRenderItems(const std::vector<std::unique_ptr<UiItemBase>> &items);
 void UiInitList_clear();
