@@ -252,7 +252,7 @@ void PrintInfo(const Surface &out)
 	if (talkflag)
 		return;
 
-	const int space[] = { 18, 12, 6, 3, 0 };
+	const int space[] = { 18, 12, 6, 3, 0, 0 };
 	Rectangle infoArea { GetMainPanel().position + Displacement { 177, 46 }, { 288, 60 } };
 
 	const int newLineCount = std::count(InfoString.str().begin(), InfoString.str().end(), '\n');

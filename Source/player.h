@@ -764,6 +764,7 @@ extern DVL_API_FOR_TEST Player *MyPlayer;
 extern DVL_API_FOR_TEST std::vector<Player> Players;
 extern bool MyPlayerIsDead;
 extern const int BlockBonuses[enum_size<HeroClass>::value];
+extern int deathCounter;
 
 Player *PlayerAtPosition(Point position);
 
