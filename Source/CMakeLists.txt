@@ -234,8 +234,8 @@ else()
 endif()
 file(GENERATE OUTPUT ${CONFIG_PATH} CONTENT
 "#pragma once
-#define PROJECT_NAME \"RagingHedgehog\"
-#define PROJECT_VERSION \"Qndel_the_best\"
+#define PROJECT_NAME \"Devilution\"
+#define PROJECT_VERSION \"1.4.1\"
 #define PROJECT_VERSION_MAJOR 6
 #define PROJECT_VERSION_MINOR 6
 #define PROJECT_VERSION_PATCH 6
